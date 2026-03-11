@@ -6,12 +6,14 @@ from pathlib import Path
 
 import click
 import yaml
+from dotenv import load_dotenv
 
 from src.data.storage import Storage
 
 
 def load_config(config_path: str = "config.yaml") -> dict:
     """Load configuration, resolving environment variables."""
+    load_dotenv()
     path = Path(config_path)
     if not path.exists():
         return {}

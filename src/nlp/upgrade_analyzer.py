@@ -41,8 +41,8 @@ class UpgradeAnalyzer:
     """Analyzes F1 upgrade articles using Azure OpenAI."""
 
     def __init__(self, endpoint: str = None, api_key: str = None,
-                 deployment: str = "gpt-4o",
-                 api_version: str = "2024-10-21"):
+                 deployment: str = "gpt-5-chat",
+                 api_version: str = "2024-02-15-preview"):
         self.endpoint = endpoint or os.environ.get("AZURE_OPENAI_ENDPOINT", "")
         self.api_key = api_key or os.environ.get("AZURE_OPENAI_API_KEY", "")
         self.deployment = deployment

@@ -5,8 +5,9 @@
 azure_openai:
   endpoint: "${AZURE_OPENAI_ENDPOINT}"  # e.g. https://your-resource.openai.azure.com/
   api_key: "${AZURE_OPENAI_API_KEY}"
-  deployment: "gpt-4o"
-  api_version: "2024-10-21"
+  api_version: "${AZURE_OPENAI_API_VERSION}"
+  deployment: "${AZURE_CHAT_DEPLOYMENT}"
+  embedding_deployment: "${AZURE_EMBEDDING_DEPLOYMENT}"
 
 # OpenWeatherMap API
 openweathermap:
