@@ -1,0 +1,37 @@
+[project]
+name = "f1-predict"
+version = "0.1.0"
+description = "ML-based F1 race winner prediction system for the 2026 season"
+requires-python = ">=3.11"
+dependencies = [
+    "fastf1>=3.8",
+    "requests>=2.31",
+    "click>=8.1",
+    "pyyaml>=6.0",
+    "pandas>=2.1",
+    "numpy>=1.26",
+    "scikit-learn>=1.4",
+    "xgboost>=2.0",
+    "lightgbm>=4.3",
+    "openai>=1.12",
+    "beautifulsoup4>=4.12",
+    "lxml>=5.0",
+    "rich>=13.7",
+    "tabulate>=0.9",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=4.1",
+]
+
+[project.scripts]
+f1predict = "src.cli:cli"
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["src*"]

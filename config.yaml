@@ -1,0 +1,52 @@
+# F1 Predict Configuration
+# ========================
+
+# Azure OpenAI settings for upgrade news analysis
+azure_openai:
+  endpoint: "${AZURE_OPENAI_ENDPOINT}"  # e.g. https://your-resource.openai.azure.com/
+  api_key: "${AZURE_OPENAI_API_KEY}"
+  deployment: "gpt-4o"
+  api_version: "2024-10-21"
+
+# OpenWeatherMap API
+openweathermap:
+  api_key: "${OPENWEATHERMAP_API_KEY}"
+
+# Data settings
+data:
+  db_path: "data/f1_predict.db"
+  cache_dir: "data/cache"
+  historical_seasons: [2022, 2023, 2024, 2025]
+
+# Model settings
+model:
+  save_dir: "models"
+  ensemble_weights:
+    xgboost: 0.4
+    lightgbm: 0.4
+    neural: 0.2
+  cold_start_fp_boost_races: 5  # Extra FP weight for first N races of new regs
+  retrain_interval: 3           # Retrain after every N races
+
+# Feature settings
+features:
+  driver_form_window: 5         # Number of recent races for form calculation
+  driver_form_decay: 0.85       # Exponential decay factor
+  elo_k_factor: 32              # Elo K-factor for updates
+  elo_initial: 1500             # Starting Elo rating
+  upgrade_lookback_days: 14     # Days before race to search for upgrade news
+
+# News scraping sources
+news_sources:
+  - name: "The Race"
+    base_url: "https://www.the-race.com"
+    search_url: "https://www.the-race.com/?s={query}"
+  - name: "Planet F1"
+    base_url: "https://www.planetf1.com"
+    search_url: "https://www.planetf1.com/?s={query}"
+  - name: "Autosport"
+    base_url: "https://www.autosport.com"
+    search_url: "https://www.autosport.com/search/?query={query}"
+  - name: "Formula 1"
+    base_url: "https://www.formula1.com"
+    search_url: "https://www.formula1.com/en/latest/all?filter={query}"
