@@ -5,8 +5,11 @@ import Telemetry from "./proposals/Telemetry";
 import Circuit from "./proposals/Circuit";
 import Nocturne from "./proposals/Nocturne";
 import Slipstream from "./proposals/Slipstream";
+import Official from "./proposals/Official";
 
 const ROUTES: Record<string, () => React.ReactNode> = {
+  live: () => <Official />,
+  official: () => <Official />,
   paddock: () => <Paddock />,
   telemetry: () => <Telemetry />,
   circuit: () => <Circuit />,

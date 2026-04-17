@@ -429,6 +429,191 @@ export default function Gallery() {
           transform: translateX(4px);
         }
 
+        .featured {
+          display: grid;
+          grid-template-columns: 1.3fr 1fr;
+          gap: 0;
+          background: #11151d;
+          border: 1px solid #1e2430;
+          border-radius: 4px;
+          overflow: hidden;
+          cursor: pointer;
+          margin-bottom: 50px;
+          transition: transform 200ms ease, border-color 200ms ease;
+        }
+        .featured:hover { transform: translateY(-4px); border-color: #e10600; }
+        @media (max-width: 900px) { .featured { grid-template-columns: 1fr; } }
+
+        .featured-preview {
+          background: linear-gradient(135deg, #0f0f17 0%, #15151e 100%);
+          padding: 0;
+          position: relative;
+          display: flex;
+          flex-direction: column;
+          min-height: 360px;
+        }
+        .feat-livery {
+          display: flex;
+          height: 4px;
+        }
+        .feat-livery span { flex: 1; }
+        .feat-nav {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          padding: 14px 20px;
+          border-bottom: 1px solid #24242f;
+          font-family: 'IBM Plex Mono', monospace;
+          font-size: 10px;
+          letter-spacing: 2px;
+          color: #a9a9b8;
+        }
+        .feat-mark {
+          background: #e10600;
+          color: #fff;
+          font-family: 'Titillium Web', sans-serif;
+          font-weight: 900;
+          font-style: italic;
+          font-size: 16px;
+          padding: 1px 6px;
+          letter-spacing: -1px;
+        }
+        .feat-name { color: #fff; font-family: 'Titillium Web', sans-serif; font-weight: 700; letter-spacing: 3px; }
+        .feat-tabs { flex: 1; font-size: 9px; }
+        .feat-live {
+          color: #e10600;
+          padding: 3px 8px;
+          border: 1px solid rgba(225,6,0,0.3);
+          background: rgba(225,6,0,0.08);
+          font-size: 9px;
+        }
+        .feat-cards {
+          display: grid;
+          grid-template-columns: repeat(4, 1fr);
+          gap: 8px;
+          padding: 20px;
+        }
+        .feat-cal {
+          background: #15151e;
+          border: 1px solid #24242f;
+          padding: 10px 10px 12px;
+          border-radius: 2px;
+          font-family: 'Bebas Neue', sans-serif;
+          font-size: 12px;
+          letter-spacing: 1px;
+          color: #fff;
+          display: flex;
+          flex-direction: column;
+          gap: 4px;
+          position: relative;
+        }
+        .feat-cal > span {
+          display: block;
+        }
+        .feat-cal > span:nth-child(1) {
+          font-family: 'IBM Plex Mono', monospace;
+          font-size: 9px;
+          letter-spacing: 1.5px;
+          color: #6a6a7a;
+          font-weight: 400;
+        }
+        .feat-cal > span:nth-child(2) {
+          font-family: sans-serif;
+          font-size: 20px;
+        }
+
+        .feat-steps {
+          padding: 0 20px 20px;
+          display: grid;
+          gap: 6px;
+        }
+        .fstep {
+          padding: 8px 12px;
+          font-family: 'IBM Plex Mono', monospace;
+          font-size: 11px;
+          letter-spacing: 1px;
+          border-left: 3px solid #24242f;
+          background: rgba(255,255,255,0.02);
+        }
+        .fstep.done { color: #2ea043; border-left-color: #2ea043; }
+        .fstep.active {
+          color: #e10600;
+          border-left-color: #e10600;
+          background: rgba(225,6,0,0.08);
+          animation: feat-pulse 1.4s ease-in-out infinite;
+        }
+        .fstep.active em { color: #fff; font-style: normal; float: right; font-weight: 600; }
+        .fstep.pending { color: #6a6a7a; opacity: 0.5; }
+        @keyframes feat-pulse {
+          0%, 100% { background: rgba(225,6,0,0.08); }
+          50% { background: rgba(225,6,0,0.16); }
+        }
+
+        .featured-body {
+          padding: 40px 40px 36px;
+          display: flex;
+          flex-direction: column;
+          gap: 10px;
+        }
+        .featured-tag {
+          font-family: 'IBM Plex Mono', monospace;
+          font-size: 11px;
+          letter-spacing: 3px;
+          color: #e10600;
+          font-weight: 600;
+        }
+        .featured-title {
+          font-family: 'Fraunces', serif;
+          font-size: 64px;
+          font-weight: 900;
+          letter-spacing: -2px;
+          margin: 2px 0 2px;
+          line-height: 1;
+        }
+        .featured-tag-sub {
+          font-family: 'IBM Plex Mono', monospace;
+          font-size: 12px;
+          letter-spacing: 2px;
+          color: #a9a9b8;
+          text-transform: uppercase;
+          margin: 0 0 6px;
+        }
+        .featured-desc {
+          font-size: 15px;
+          line-height: 1.6;
+          color: #a9b4c0;
+          margin: 2px 0 12px;
+        }
+        .featured-palette {
+          display: flex;
+          gap: 4px;
+          margin-bottom: 16px;
+        }
+        .featured-palette span {
+          width: 28px;
+          height: 28px;
+          border-radius: 2px;
+        }
+
+        .featured-divider {
+          display: flex;
+          align-items: center;
+          gap: 20px;
+          margin: 20px 0 40px;
+        }
+        .featured-divider .hair {
+          flex: 1;
+          height: 1px;
+          background: #1e2430;
+        }
+        .fd-label {
+          font-family: 'IBM Plex Mono', monospace;
+          font-size: 11px;
+          letter-spacing: 4px;
+          text-transform: uppercase;
+          color: #6b7684;
+        }
+
         .footer-note {
           margin-top: 80px;
           padding-top: 30px;
@@ -453,6 +638,67 @@ export default function Gallery() {
             attributions — five interpretations. Pick one, or cherry-pick the
             moves that feel right.
           </p>
+
+          <div className="featured" onClick={() => go("live")}>
+            <div className="featured-preview">
+              <div className="feat-livery">
+                <span style={{ background: "#00a3ff" }} />
+                <span style={{ background: "#ff6400" }} />
+                <span style={{ background: "#dc0000" }} />
+                <span style={{ background: "#1a4d3a" }} />
+                <span style={{ background: "#15151e" }} />
+              </div>
+              <div className="feat-nav">
+                <span className="feat-mark">F1</span>
+                <span className="feat-name">PREDICT</span>
+                <span className="feat-tabs">PREDICT · CALENDAR · STANDINGS</span>
+                <span className="feat-live">● PRE-RACE</span>
+              </div>
+              <div className="feat-cards">
+                <div className="feat-cal" style={{ borderColor: "#e10600" }}>
+                  <div style={{ color: "#a9a9b8", fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, letterSpacing: 2 }}>R01</div>
+                  <div style={{ fontSize: 24 }}>🇧🇭</div>
+                  <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 16 }}>BAHRAIN</div>
+                </div>
+                <div className="feat-cal"><span>R02</span><span>🇸🇦</span><span>SAUDI</span></div>
+                <div className="feat-cal"><span>R03</span><span>🇦🇺</span><span>AUS</span></div>
+                <div className="feat-cal"><span>R04</span><span>🇯🇵</span><span>JPN</span></div>
+              </div>
+              <div className="feat-steps">
+                <div className="fstep done">✓ FP1 · FP2 · FP3 telemetry</div>
+                <div className="fstep done">✓ Feature matrix</div>
+                <div className="fstep active">● Monte Carlo 3,812 / 5,000 <em>70%</em></div>
+                <div className="fstep pending">○ SHAP attribution</div>
+              </div>
+            </div>
+            <div className="featured-body">
+              <div className="featured-tag">RECOMMENDED · 00</div>
+              <h2 className="featured-title">Official</h2>
+              <p className="featured-tag-sub">F1.com-style · race selector · live progress</p>
+              <p className="featured-desc">
+                Pick any round of the 2026 calendar, watch the pipeline run in
+                real-time — FP telemetry, weather, upgrade news, Monte Carlo
+                simulation, SHAP attribution — then read the classification.
+                The complete application. Starts here.
+              </p>
+              <div className="featured-palette">
+                <span style={{ background: "#e10600" }} />
+                <span style={{ background: "#15151e", border: "1px solid #333" }} />
+                <span style={{ background: "#00a3ff" }} />
+                <span style={{ background: "#ff6400" }} />
+                <span style={{ background: "#1a4d3a" }} />
+              </div>
+              <span className="card-cta">
+                Open application <span className="arrow">→</span>
+              </span>
+            </div>
+          </div>
+
+          <div className="featured-divider">
+            <span className="hair" />
+            <span className="fd-label">Alternative directions</span>
+            <span className="hair" />
+          </div>
 
           <div className="grid">
             {PROPOSALS.map((p, i) => (

@@ -1,6 +1,7 @@
 import { useHashRoute } from "./useHashRoute";
 
 const PROPOSALS = [
+  { slug: "live", label: "00 · Official" },
   { slug: "paddock", label: "01 · Paddock" },
   { slug: "telemetry", label: "02 · Telemetry" },
   { slug: "circuit", label: "03 · Circuit" },
