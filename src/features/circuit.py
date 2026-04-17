@@ -39,13 +39,15 @@ CIRCUIT_TYPE_MAP = {"street": 0, "technical": 1, "high_speed": 2, "hybrid": 3}
 
 
 def extract_circuit_features(storage: Storage, circuit_id: str,
-                               race_id: int = None) -> dict:
+                               race_id: int = None,
+                               as_of_date: str | None = None) -> dict:
     """Extract circuit-level features.
 
     Args:
         storage: Database storage instance.
         circuit_id: Circuit identifier.
         race_id: Optional race ID for historical stats.
+        as_of_date: ISO cutoff for historical overtaking/SC computations.
 
     Returns:
         Dict of feature name -> value.
@@ -85,12 +87,12 @@ def extract_circuit_features(storage: Storage, circuit_id: str,
     tyre_stress = meta.get("tyre_stress", "medium")
     features["circuit_tyre_stress"] = {"low": 0, "medium": 1, "high": 2}.get(tyre_stress, 1)
 
-    # Historical stats from race data
+    # Historical stats from race data (cutoff-respecting)
     features["circuit_overtaking_difficulty"] = _compute_overtaking_rate(
-        storage, circuit_id
+        storage, circuit_id, as_of_date=as_of_date
     )
     features["circuit_safety_car_prob"] = _compute_sc_probability(
-        storage, circuit_id
+        storage, circuit_id, as_of_date=as_of_date
     )
 
     return features
@@ -112,18 +114,28 @@ def _find_circuit_metadata(circuit_id: str) -> dict:
     return {}
 
 
-def _compute_overtaking_rate(storage: Storage, circuit_id: str) -> float:
+def _compute_overtaking_rate(storage: Storage, circuit_id: str,
+                              as_of_date: str | None = None) -> float:
     """Compute average positions gained per race at this circuit."""
-    # Query all races at this circuit
     with storage._connect() as conn:
-        rows = conn.execute("""
-            SELECT r.grid_position, r.finish_position
-            FROM results r
-            JOIN races ra ON r.race_id = ra.id
-            WHERE ra.circuit_id = ?
-            AND r.grid_position IS NOT NULL
-            AND r.finish_position IS NOT NULL
-        """, (circuit_id,)).fetchall()
+        if as_of_date:
+            rows = conn.execute("""
+                SELECT r.grid_position, r.finish_position
+                FROM results r
+                JOIN races ra ON r.race_id = ra.id
+                WHERE ra.circuit_id = ? AND ra.date < ?
+                AND r.grid_position IS NOT NULL
+                AND r.finish_position IS NOT NULL
+            """, (circuit_id, as_of_date)).fetchall()
+        else:
+            rows = conn.execute("""
+                SELECT r.grid_position, r.finish_position
+                FROM results r
+                JOIN races ra ON r.race_id = ra.id
+                WHERE ra.circuit_id = ?
+                AND r.grid_position IS NOT NULL
+                AND r.finish_position IS NOT NULL
+            """, (circuit_id,)).fetchall()
 
     if not rows:
         return 0.5  # Default medium overtaking
@@ -132,12 +144,19 @@ def _compute_overtaking_rate(storage: Storage, circuit_id: str) -> float:
     return total_changes / len(rows) if rows else 0.5
 
 
-def _compute_sc_probability(storage: Storage, circuit_id: str) -> float:
+def _compute_sc_probability(storage: Storage, circuit_id: str,
+                             as_of_date: str | None = None) -> float:
     """Estimate safety car probability based on historical DNFs/incidents."""
     with storage._connect() as conn:
-        races = conn.execute("""
-            SELECT ra.id FROM races ra WHERE ra.circuit_id = ?
-        """, (circuit_id,)).fetchall()
+        if as_of_date:
+            races = conn.execute("""
+                SELECT ra.id FROM races ra
+                WHERE ra.circuit_id = ? AND ra.date < ?
+            """, (circuit_id, as_of_date)).fetchall()
+        else:
+            races = conn.execute("""
+                SELECT ra.id FROM races ra WHERE ra.circuit_id = ?
+            """, (circuit_id,)).fetchall()
 
     if not races:
         return 0.5

@@ -14,6 +14,7 @@ from src.features.team import update_team_elo
 from src.models.xgboost_model import XGBoostRanker
 from src.models.lightgbm_model import LightGBMRanker
 from src.models.ensemble import RankingEnsemble
+from src.models.qualifying_model import QualifyingRanker
 
 logger = logging.getLogger(__name__)
 
@@ -26,8 +27,23 @@ class Trainer:
         self.model_dir = Path(model_dir)
         self.model_dir.mkdir(parents=True, exist_ok=True)
 
-        self.xgb_model = XGBoostRanker()
-        self.lgb_model = LightGBMRanker()
+        # Load tuned hyperparams if a previous `tune()` run persisted them.
+        xgb_params = None
+        lgb_params = None
+        best_params_path = self.model_dir / "best_params.json"
+        if best_params_path.exists():
+            try:
+                import json
+                best = json.loads(best_params_path.read_text())
+                xgb_params = best.get("xgboost")
+                lgb_params = best.get("lightgbm")
+                logger.info("Loaded tuned hyperparameters from best_params.json")
+            except Exception as e:
+                logger.debug(f"Could not load best_params.json: {e}")
+
+        self.xgb_model = XGBoostRanker(params=xgb_params)
+        self.lgb_model = LightGBMRanker(params=lgb_params)
+        self.qual_model = QualifyingRanker()
         self.ensemble = RankingEnsemble()
         self.feature_builder = FeatureBuilder(storage)
 
@@ -54,7 +70,9 @@ class Trainer:
             train_seasons = seasons
             validation_season = None
 
-        X_train, y_train = self.feature_builder.build_training_data(train_seasons)
+        X_train, y_train, grid_train = self.feature_builder.build_training_data(
+            train_seasons, include_grid_target=True
+        )
 
         if X_train.empty:
             logger.error("No training data available")
@@ -67,6 +85,17 @@ class Trainer:
 
         # Compute recency weights
         weights = self._compute_recency_weights(X_train, train_seasons)
+
+        # Train the qualifying model WITHOUT the predicted_grid_position
+        # feature (can't use the target as input).
+        quali_feature_cols = [c for c in FEATURE_COLUMNS if c != "predicted_grid_position"]
+        X_train_quali = X_train[quali_feature_cols]
+        grid_valid = grid_train.dropna()
+        if not grid_valid.empty and len(grid_valid) == len(X_train_quali):
+            logger.info("Training qualifying ranker...")
+            self.qual_model.train(X_train_quali, grid_valid.astype(int),
+                                   groups_train, weights)
+            self.qual_model.save(str(self.model_dir / "qualifying_ranker.joblib"))
 
         # Prepare validation data
         eval_set = None
@@ -92,6 +121,45 @@ class Trainer:
         self.xgb_model.save(str(self.model_dir / "xgboost_ranker.joblib"))
         self.lgb_model.save(str(self.model_dir / "lightgbm_ranker.joblib"))
 
+        # Phase 2.2: CatBoost for ensemble diversity (YetiRank loss).
+        try:
+            from src.models.catboost_model import CatBoostRanker
+            self.cat_model = CatBoostRanker()
+            if self.cat_model._available():
+                logger.info("Training CatBoost ranker (YetiRank)...")
+                self.cat_model.train(X_train, y_train, groups_train, weights)
+                self.cat_model.save(str(self.model_dir / "catboost_ranker.joblib"))
+                self.ensemble.add_model("catboost", self.cat_model)
+        except Exception as e:
+            logger.warning(f"CatBoost training skipped: {e}")
+
+        # Phase 2.2: Real neural ranker (listwise softmax CE).
+        try:
+            from src.models.neural_model import NeuralRanker
+            self.nn_model = NeuralRanker()
+            if self.nn_model._available():
+                logger.info("Training neural ranker...")
+                self.nn_model.train(X_train, y_train, groups_train, weights)
+                self.nn_model.save(str(self.model_dir / "neural_ranker.joblib"))
+                self.ensemble.add_model("neural", self.nn_model)
+        except Exception as e:
+            logger.warning(f"Neural training skipped: {e}")
+
+        # Phase 2.3: fit stacking meta-learner on CV out-of-fold predictions.
+        try:
+            cv = self.cross_validate(train_seasons)
+            if cv.get("oof"):
+                stacker_raw_cols = ["predicted_grid_position", "circuit_type", "race_is_wet"]
+                # Attach raw feature frames to each fold for the stacker.
+                for val_season, fold_data in cv["oof"].items():
+                    X_val_full, _ = self.feature_builder.build_training_data([val_season])
+                    if len(X_val_full) == len(fold_data.get("y_true", [])):
+                        fold_data["raw_features"] = X_val_full
+                self.ensemble.fit_stacker(cv["oof"], raw_feature_cols=stacker_raw_cols)
+                self.ensemble.save_stacker(str(self.model_dir / "stacker.joblib"))
+        except Exception as e:
+            logger.warning(f"Stacker fitting skipped: {e}")
+
         # Evaluate
         metrics = {}
         if validation_season and eval_set:
@@ -109,10 +177,158 @@ class Trainer:
         metrics["features"] = len(FEATURE_COLUMNS)
         return metrics
 
+    def tune(self, seasons: list[int], n_trials: int = 40) -> dict:
+        """Run Optuna hyperparameter search across CV folds.
+
+        Persists best params to JSON so the next `train()` picks them up.
+        """
+        from src.models.tuning import tune_lightgbm, tune_xgboost
+        import json
+
+        seasons = sorted(seasons)
+        self._build_elo_ratings(seasons)
+
+        X_by_season: dict[int, pd.DataFrame] = {}
+        y_by_season: dict[int, pd.Series] = {}
+        groups_by_season: dict[int, list[int]] = {}
+        for s in seasons:
+            X_s, y_s = self.feature_builder.build_training_data([s])
+            if X_s.empty:
+                continue
+            X_by_season[s] = X_s
+            y_by_season[s] = y_s
+            groups_by_season[s] = self._compute_groups(X_s, y_s, [s])
+
+        lgb_params = tune_lightgbm(X_by_season, y_by_season, groups_by_season,
+                                     list(X_by_season.keys()), n_trials=n_trials)
+        xgb_params = tune_xgboost(X_by_season, y_by_season, groups_by_season,
+                                    list(X_by_season.keys()), n_trials=n_trials)
+
+        best = {"lightgbm": lgb_params, "xgboost": xgb_params}
+        out_path = self.model_dir / "best_params.json"
+        out_path.write_text(json.dumps(best, indent=2, default=str))
+        logger.info(f"Best hyperparameters saved to {out_path}")
+
+        # Apply immediately for next train()
+        self.lgb_model = LightGBMRanker(params=lgb_params)
+        self.xgb_model = XGBoostRanker(params=xgb_params)
+        return best
+
+    def cross_validate(self, seasons: list[int]) -> dict:
+        """Expanding-window time-series CV.
+
+        For seasons [S1..Sn], train on [S1..Sk] and validate on Sk+1 for
+        each k >= 1. Returns aggregated fold metrics plus per-fold detail.
+
+        Also exposes the out-of-fold predictions on scores dict, suitable
+        for training a stacking meta-learner (see RankingEnsemble).
+        """
+        seasons = sorted(seasons)
+        if len(seasons) < 2:
+            logger.warning("Need at least 2 seasons for time-series CV; skipping")
+            return {"folds": [], "oof": {}}
+
+        logger.info(f"Time-series CV over seasons: {seasons}")
+        self._build_elo_ratings(seasons)
+
+        folds: list[dict] = []
+        oof_predictions: dict[int, dict] = {}
+
+        for k in range(1, len(seasons)):
+            train_seasons = seasons[:k]
+            val_season = seasons[k]
+            logger.info(
+                f"Fold {k}: train={train_seasons} validate={val_season}"
+            )
+
+            X_tr, y_tr = self.feature_builder.build_training_data(train_seasons)
+            if X_tr.empty:
+                continue
+            X_vl, y_vl = self.feature_builder.build_training_data([val_season])
+            if X_vl.empty:
+                continue
+
+            groups_tr = self._compute_groups(X_tr, y_tr, train_seasons)
+            groups_vl = self._compute_groups(X_vl, y_vl, [val_season])
+            weights_tr = self._compute_recency_weights(X_tr, train_seasons)
+
+            fold_xgb = XGBoostRanker()
+            fold_lgb = LightGBMRanker()
+            fold_xgb.train(X_tr, y_tr, groups_tr, weights_tr)
+            fold_lgb.train(X_tr, y_tr, groups_tr, weights_tr)
+
+            xgb_scores = fold_xgb.predict(X_vl)
+            lgb_scores = fold_lgb.predict(X_vl)
+
+            fold_metrics = self._fold_metrics(
+                {"xgboost": xgb_scores, "lightgbm": lgb_scores},
+                y_vl, groups_vl,
+            )
+            fold_metrics["fold"] = k
+            fold_metrics["train_seasons"] = train_seasons
+            fold_metrics["val_season"] = val_season
+            folds.append(fold_metrics)
+
+            oof_predictions[val_season] = {
+                "xgboost": xgb_scores.tolist(),
+                "lightgbm": lgb_scores.tolist(),
+                "y_true": y_vl.tolist(),
+                "groups": groups_vl,
+            }
+
+        if not folds:
+            return {"folds": [], "oof": {}}
+
+        agg = {
+            "mean_top1": float(np.mean([f["top1_accuracy"] for f in folds])),
+            "mean_top3": float(np.mean([f["top3_accuracy"] for f in folds])),
+            "mean_spearman": float(np.mean([f["spearman"] for f in folds])),
+            "n_folds": len(folds),
+        }
+        logger.info(f"CV aggregate: {agg}")
+        return {"folds": folds, "aggregate": agg, "oof": oof_predictions}
+
+    def _fold_metrics(self, scores_by_model: dict, y: pd.Series,
+                       groups: list[int]) -> dict:
+        """Compute per-model metrics for a validation fold."""
+        from scipy.stats import spearmanr as _spearmanr
+        best = None
+        for name, scores in scores_by_model.items():
+            corr, _ = _spearmanr(scores, -y)
+            top1_correct = 0
+            top3_correct = 0
+            n_races = 0
+            offset = 0
+            for group_size in groups:
+                if offset + group_size > len(scores):
+                    break
+                race_scores = scores[offset:offset + group_size]
+                race_positions = y.iloc[offset:offset + group_size].values
+                pred_winner = int(np.argmax(race_scores))
+                actual_winner = int(np.argmin(race_positions))
+                if pred_winner == actual_winner:
+                    top1_correct += 1
+                pred_top3 = set(np.argsort(race_scores)[-3:])
+                if actual_winner in pred_top3:
+                    top3_correct += 1
+                n_races += 1
+                offset += group_size
+            fold = {
+                "model": name,
+                "top1_accuracy": top1_correct / max(n_races, 1),
+                "top3_accuracy": top3_correct / max(n_races, 1),
+                "spearman": float(corr) if not np.isnan(corr) else 0.0,
+                "races": n_races,
+            }
+            if best is None or fold["top3_accuracy"] > best["top3_accuracy"]:
+                best = fold
+        return best or {"top1_accuracy": 0, "top3_accuracy": 0, "spearman": 0, "races": 0}
+
     def load_models(self):
         """Load pre-trained models from disk."""
         xgb_path = self.model_dir / "xgboost_ranker.joblib"
         lgb_path = self.model_dir / "lightgbm_ranker.joblib"
+        qual_path = self.model_dir / "qualifying_ranker.joblib"
 
         if xgb_path.exists():
             self.xgb_model.load(str(xgb_path))
@@ -122,11 +338,43 @@ class Trainer:
             self.lgb_model.load(str(lgb_path))
             self.ensemble.add_model("lightgbm", self.lgb_model)
 
+        if qual_path.exists():
+            self.qual_model.load(str(qual_path))
+
+        # CatBoost and neural rankers (Phase 2.2) — loaded if present.
+        try:
+            cat_path = self.model_dir / "catboost_ranker.joblib"
+            if cat_path.exists():
+                from src.models.catboost_model import CatBoostRanker
+                self.cat_model = CatBoostRanker()
+                self.cat_model.load(str(cat_path))
+                self.ensemble.add_model("catboost", self.cat_model)
+        except Exception as e:
+            logger.debug(f"CatBoost load skipped: {e}")
+
+        try:
+            nn_path = self.model_dir / "neural_ranker.joblib"
+            if nn_path.exists():
+                from src.models.neural_model import NeuralRanker
+                self.nn_model = NeuralRanker()
+                self.nn_model.load(str(nn_path))
+                self.ensemble.add_model("neural", self.nn_model)
+        except Exception as e:
+            logger.debug(f"Neural ranker load skipped: {e}")
+
         if not self.ensemble.models:
             raise FileNotFoundError(
                 f"No trained models found in {self.model_dir}. "
                 "Run 'f1predict train' first."
             )
+
+        stacker_path = self.model_dir / "stacker.joblib"
+        if stacker_path.exists():
+            try:
+                self.ensemble.load_stacker(str(stacker_path))
+                logger.info("Loaded stacking meta-learner")
+            except Exception as e:
+                logger.warning(f"Stacker load skipped: {e}")
 
     def retrain_incremental(self, new_season: int, new_round: int):
         """Retrain models incorporating new race data.

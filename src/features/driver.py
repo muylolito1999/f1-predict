@@ -8,7 +8,8 @@ from src.data.storage import Storage
 
 def extract_driver_features(storage: Storage, driver_id: str,
                              team: str, year: int, round_num: int,
-                             circuit_id: str) -> dict:
+                             circuit_id: str,
+                             as_of_date: str | None = None) -> dict:
     """Extract all driver-level features.
 
     Args:
@@ -18,17 +19,24 @@ def extract_driver_features(storage: Storage, driver_id: str,
         year: Season year.
         round_num: Race round number.
         circuit_id: Circuit identifier.
+        as_of_date: ISO date string (YYYY-MM-DD). All history/form lookups
+            are restricted to races strictly before this date. Required
+            for leakage-safe training/backtesting.
 
     Returns:
         Dict of feature name -> value.
     """
     features = {}
 
-    # Elo rating
-    features["driver_elo"] = storage.get_latest_elo("driver", driver_id)
+    # Elo rating (only use ratings from races before this date)
+    features["driver_elo"] = storage.get_latest_elo(
+        "driver", driver_id, before_date=as_of_date
+    )
 
     # Circuit-specific history
-    circuit_results = storage.get_driver_results_at_circuit(driver_id, circuit_id)
+    circuit_results = storage.get_driver_results_at_circuit(
+        driver_id, circuit_id, before_date=as_of_date
+    )
     if not circuit_results.empty:
         positions = circuit_results["finish_position"].dropna()
         if not positions.empty:
@@ -38,7 +46,7 @@ def extract_driver_features(storage: Storage, driver_id: str,
     features.setdefault("driver_circuit_best", 10.0)
 
     # Recent form (weighted average of last N races)
-    recent = storage.get_recent_results(driver_id, limit=5)
+    recent = storage.get_recent_results(driver_id, limit=5, before_date=as_of_date)
     if not recent.empty:
         positions = recent["finish_position"].dropna()
         if not positions.empty:
@@ -66,7 +74,7 @@ def extract_driver_features(storage: Storage, driver_id: str,
 
     # Wet weather ability (historical wet races)
     # Approximated from races where weather was wet
-    features["driver_wet_ability"] = _compute_wet_ability(storage, driver_id)
+    features["driver_wet_ability"] = _compute_wet_ability(storage, driver_id, as_of_date)
 
     # Championship position
     standings = storage.get_standings_before_race(year, round_num)
@@ -78,13 +86,13 @@ def extract_driver_features(storage: Storage, driver_id: str,
     features.setdefault("driver_championship_pos", 10)
     features.setdefault("driver_championship_points", 0.0)
 
-    # Teammate delta
+    # Teammate delta (historical, pre-cutoff)
     features["driver_teammate_delta"] = _compute_teammate_delta(
-        storage, driver_id, team
+        storage, driver_id, team, as_of_date
     )
 
     # Career stats (approximate from available data)
-    all_results = storage.get_recent_results(driver_id, limit=200)
+    all_results = storage.get_recent_results(driver_id, limit=200, before_date=as_of_date)
     if not all_results.empty:
         features["driver_starts"] = len(all_results)
         wins = (all_results["finish_position"] == 1).sum()
@@ -109,12 +117,13 @@ def extract_driver_features(storage: Storage, driver_id: str,
     return features
 
 
-def _compute_wet_ability(storage: Storage, driver_id: str) -> float:
+def _compute_wet_ability(storage: Storage, driver_id: str,
+                          as_of_date: str | None = None) -> float:
     """Compute driver's wet weather performance rating.
 
     Compares performance in wet vs dry races.
     """
-    recent = storage.get_recent_results(driver_id, limit=100)
+    recent = storage.get_recent_results(driver_id, limit=100, before_date=as_of_date)
     if recent.empty:
         return 0.0
 
@@ -136,9 +145,10 @@ def _compute_wet_ability(storage: Storage, driver_id: str) -> float:
 
 
 def _compute_teammate_delta(storage: Storage, driver_id: str,
-                             team: str) -> float:
-    """Compute average finish position delta vs teammate."""
-    recent = storage.get_recent_results(driver_id, limit=10)
+                             team: str,
+                             as_of_date: str | None = None) -> float:
+    """Compute average finish position delta vs teammate (historical)."""
+    recent = storage.get_recent_results(driver_id, limit=10, before_date=as_of_date)
     if recent.empty:
         return 0.0
 

@@ -22,11 +22,20 @@ data:
 model:
   save_dir: "models"
   ensemble_weights:
-    xgboost: 0.4
-    lightgbm: 0.4
-    neural: 0.2
+    xgboost: 0.30
+    lightgbm: 0.30
+    catboost: 0.25
+    neural: 0.15
   cold_start_fp_boost_races: 5  # Extra FP weight for first N races of new regs
   retrain_interval: 3           # Retrain after every N races
+  use_quali_stage: true         # Phase 2.1: two-stage quali->race
+  stacking_meta: true           # Phase 2.3: use stacker when available
+  simulator:
+    n_sims: 5000                # Phase 3.1: Monte Carlo draws
+    score_noise_sigma: 0.25     # noise around ranking scores
+    sc_shake: 0.4               # extra noise when SC fires
+  training:
+    cv_folds: true              # Phase 1.3: expanding-window CV
 
 # Feature settings
 features:
@@ -35,6 +44,7 @@ features:
   elo_k_factor: 32              # Elo K-factor for updates
   elo_initial: 1500             # Starting Elo rating
   upgrade_lookback_days: 14     # Days before race to search for upgrade news
+  telemetry_enabled: false      # Phase 4.1: OpenF1 telemetry (slow; opt-in)
 
 # News scraping sources
 news_sources:

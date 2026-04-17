@@ -209,6 +209,44 @@ class TestNewsFeatures:
         assert features["upgrade_sentiment"] == 0.7
 
 
+class TestLeakageSafety:
+    """Verify that as_of_date cutoffs prevent temporal leakage."""
+
+    def test_driver_history_respects_cutoff(self, storage):
+        # Insert a FUTURE race result that must not leak into 2024 R1 features
+        future_race_id = storage.save_race(
+            year=2024, round_num=2, name="Jeddah",
+            circuit_id="bahrain",  # same circuit to stress circuit_history
+            date="2024-03-09",
+            latitude=21.0, longitude=39.0,
+        )
+        storage.save_result(
+            future_race_id, "VER", "Max Verstappen", "Red Bull",
+            grid_position=1, finish_position=20, status="Finished", points=0,
+        )
+
+        leak_safe = extract_driver_features(
+            storage, "VER", "Red Bull", 2024, 1, "bahrain",
+            as_of_date="2024-03-02",
+        )
+        naive = extract_driver_features(
+            storage, "VER", "Red Bull", 2024, 1, "bahrain",
+        )
+
+        assert leak_safe["driver_circuit_history"] != naive["driver_circuit_history"], (
+            "Naive call should include future P20; leak-safe must exclude it."
+        )
+
+    def test_elo_respects_cutoff(self, storage):
+        update_elo(storage, storage.get_race_id(2024, 1), 2024, 1)
+        rated_now = storage.get_latest_elo("driver", "VER")
+        # With cutoff before the race, we should see the pre-race default 1500
+        rated_pre = storage.get_latest_elo(
+            "driver", "VER", before_date="2024-03-02"
+        )
+        assert rated_now != rated_pre or rated_pre == 1500.0
+
+
 class TestFeatureBuilder:
     def test_build_race_features(self, storage):
         builder = FeatureBuilder(storage)

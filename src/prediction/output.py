@@ -36,6 +36,10 @@ def display_prediction(predictions: pd.DataFrame):
     table.add_column("Win %", width=8, justify="right")
     table.add_column("Podium %", width=9, justify="right")
     table.add_column("Points %", width=9, justify="right")
+    # Phase 3.3: 10th–90th percentile finish range from the simulator.
+    has_range = "position_p10" in predictions.columns and "position_p90" in predictions.columns
+    if has_range:
+        table.add_column("P10-P90", width=10, justify="right")
     table.add_column("Confidence", width=12)
 
     for _, row in predictions.iterrows():
@@ -58,16 +62,20 @@ def display_prediction(predictions: pd.DataFrame):
         else:
             style = "dim"
 
-        table.add_row(
+        cells = [
             str(pos),
             driver,
             team,
             f"{win_prob:.1f}%",
             f"{podium_prob:.1f}%",
             f"{points_prob:.1f}%",
-            conf_bar,
-            style=style,
-        )
+        ]
+        if has_range:
+            p10 = row.get("position_p10", pos)
+            p90 = row.get("position_p90", pos)
+            cells.append(f"P{int(p10)}–P{int(p90)}")
+        cells.append(conf_bar)
+        table.add_row(*cells, style=style)
 
     console.print()
     console.print(table)
@@ -78,16 +86,32 @@ def display_prediction(predictions: pd.DataFrame):
         f"Model confidence: {confidence}",
     ]
 
-    # Feature importance if available
-    importance = predictions.attrs.get("feature_importance")
-    if importance is not None and not importance.empty:
-        top_features = importance.head(4)
-        total_imp = importance["importance"].sum()
-        feat_strs = []
-        for _, f in top_features.iterrows():
-            pct = (f["importance"] / total_imp * 100) if total_imp > 0 else 0
-            feat_strs.append(f"{f['feature']} ({pct:.0f}%)")
-        footer_parts.append(f"Key factors: {', '.join(feat_strs)}")
+    # Phase 5.4: per-driver SHAP if available, else fall back to global
+    # feature importance.
+    shap_by_driver = predictions.attrs.get("shap_by_driver") or {}
+    if shap_by_driver:
+        top_row = predictions.iloc[0]
+        winner_id = top_row.get("driver_id")
+        winner_shap = shap_by_driver.get(winner_id, [])
+        if winner_shap:
+            strs = [
+                f"{name} ({'+' if val > 0 else ''}{val:.2f})"
+                for name, val in winner_shap
+            ]
+            footer_parts.append(
+                f"Why {top_row.get('driver_name', winner_id)} is P1: "
+                f"{', '.join(strs)}"
+            )
+    else:
+        importance = predictions.attrs.get("feature_importance")
+        if importance is not None and not importance.empty:
+            top_features = importance.head(4)
+            total_imp = importance["importance"].sum()
+            feat_strs = []
+            for _, f in top_features.iterrows():
+                pct = (f["importance"] / total_imp * 100) if total_imp > 0 else 0
+                feat_strs.append(f"{f['feature']} ({pct:.0f}%)")
+            footer_parts.append(f"Key factors: {', '.join(feat_strs)}")
 
     footer = "\n".join(footer_parts)
     console.print(Panel(footer, title="Info", border_style="dim"))

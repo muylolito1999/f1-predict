@@ -95,6 +95,59 @@ class BayesianUpdater:
                 variance=prior_variance,
             )
 
+    def initialize_from_preseason_test(self, year: int,
+                                          regression_weight: float = 0.4):
+        """Pre-seed team priors using Bahrain pre-season test pace.
+
+        Pre-season data is noisier than real races (different fuel loads,
+        setups, programs), so it's worth less than one real race. We
+        rank teams by best long-run intercept across PRE1/PRE2/PRE3 and
+        nudge each team prior partially toward the pre-season order.
+
+        Args:
+            year: the regulation year (e.g. 2026).
+            regression_weight: how strongly to pull priors toward the
+                pre-season ordering, 0..1.
+        """
+        import pandas as pd
+        # Pull all PRE* rows for the year.
+        pre_races = [r for r in self.storage.get_races_for_season(year)
+                      if r["round"] < 0]
+        if not pre_races:
+            logger.info("No pre-season test data stored for %d — skipping", year)
+            return
+
+        team_paces: dict[str, list[float]] = {}
+        for r in pre_races:
+            fp = self.storage.get_fp_data(r["id"])
+            for _, row in fp.iterrows():
+                pace = row.get("long_run_pace")
+                slope = row.get("long_run_degradation") or 0.0
+                if pd.isna(pace):
+                    continue
+                intercept = float(pace) - float(slope) * 5.0
+                team_paces.setdefault(row["team"], []).append(intercept)
+
+        if not team_paces:
+            return
+
+        # Faster (smaller intercept) = stronger. Map ranks to ELO-like
+        # perturbations: rank 1 → +80, last → -80, linearly.
+        team_mean = {t: float(np.mean(v)) for t, v in team_paces.items()}
+        order = sorted(team_mean.items(), key=lambda kv: kv[1])
+        n = len(order)
+        for i, (team, _) in enumerate(order):
+            # Rank 0 = fastest. Normalize to [-1, +1], invert so fastest is positive.
+            rank_norm = 1.0 - 2.0 * i / max(n - 1, 1)
+            perturb = 80.0 * rank_norm
+            prior = self.state.team_priors.get(team) or TeamPrior(mean=1500.0, variance=200.0)
+            prior.mean += regression_weight * perturb
+            self.state.team_priors[team] = prior
+            logger.info(
+                "Pre-season prior %s: rank %d/%d → perturb %+.0f → mean=%.0f",
+                team, i + 1, n, perturb, prior.mean
+            )
+
     def update_after_race(self, race_results: dict[str, int]):
         """Update priors after observing a race result.
 

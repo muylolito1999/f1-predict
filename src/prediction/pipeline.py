@@ -2,7 +2,9 @@
 
 import logging
 from datetime import datetime
+from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 from src.data.storage import Storage
@@ -13,6 +15,7 @@ from src.nlp.upgrade_analyzer import UpgradeAnalyzer
 from src.features.builder import FeatureBuilder, FEATURE_COLUMNS
 from src.models.trainer import Trainer
 from src.models.bayesian_updater import BayesianUpdater
+from src.prediction.simulator import RaceSimulator, estimate_dnf_rates
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +29,12 @@ class PredictionPipeline:
         self.fastf1 = FastF1Client(
             cache_dir=self.config.get("data", {}).get("cache_dir", "data/cache")
         )
-        self.feature_builder = FeatureBuilder(storage)
+        telemetry_enabled = bool(
+            (self.config.get("features") or {}).get("telemetry_enabled", False)
+        )
+        self.feature_builder = FeatureBuilder(
+            storage, telemetry_enabled=telemetry_enabled
+        )
         self.trainer = Trainer(
             storage,
             model_dir=self.config.get("model", {}).get("save_dir", "models")
@@ -139,10 +147,17 @@ class PredictionPipeline:
         if not drivers:
             raise ValueError("No driver data available for prediction")
 
-        # Step 6: Build features
+        # Step 6a: Determine grid — use actual if we have it, otherwise
+        # predict with the qualifying model so the race model sees a grid
+        # feature.
+        grid_map = self._resolve_grid(year, round_num, race_id, drivers,
+                                        available_sessions, race_weather)
+
+        # Step 6b: Build features with grid injected.
         logger.info("Building feature matrix...")
         features_df = self.feature_builder.build_race_features(
-            year, round_num, drivers, available_sessions or None, race_weather
+            year, round_num, drivers, available_sessions or None,
+            race_weather, grid_map=grid_map,
         )
 
         if features_df.empty:
@@ -161,12 +176,50 @@ class PredictionPipeline:
         self.trainer.load_models()
         X = features_df[FEATURE_COLUMNS].fillna(0.0)
 
+        # Monte Carlo simulator (Phase 3.1)
+        sim_cfg = (self.config.get("model") or {}).get("simulator", {}) or {}
+        simulator = RaceSimulator(
+            n_sims=int(sim_cfg.get("n_sims", 5000)),
+            score_noise_sigma=float(sim_cfg.get("score_noise_sigma", 0.25)),
+            safety_car_position_shake=float(sim_cfg.get("sc_shake", 0.4)),
+        )
+        is_wet = int(bool(race_weather and race_weather.get("is_wet")))
+        dnf_rates = estimate_dnf_rates(
+            self.storage,
+            driver_ids=features_df["driver_id"].tolist(),
+            circuit_id=circuit_id,
+            is_wet=is_wet,
+            as_of_date=race_date or None,
+        )
+        sc_prob = float(features_df["circuit_safety_car_prob"].mean()) \
+            if "circuit_safety_car_prob" in features_df.columns else 0.35
+
         predictions = self.trainer.ensemble.predict(
             X,
             driver_ids=features_df["driver_id"].tolist(),
             driver_names=features_df.get("driver_name", pd.Series()).tolist(),
             teams=features_df.get("team", pd.Series()).tolist(),
+            simulator=simulator,
+            dnf_rates=dnf_rates,
+            sc_probability=sc_prob,
         )
+
+        # Phase 3.2: isotonic calibration of probabilities.
+        try:
+            from src.models.calibration import ProbabilityCalibrator
+            cal_path = Path(self.trainer.model_dir) / "calibrator.joblib"
+            if cal_path.exists():
+                calibrator = ProbabilityCalibrator()
+                calibrator.load(str(cal_path))
+                calibrated = calibrator.transform({
+                    "win_probability": predictions["win_probability"].values,
+                    "podium_probability": predictions["podium_probability"].values,
+                    "points_probability": predictions["points_probability"].values,
+                })
+                for k, v in calibrated.items():
+                    predictions[k] = v
+        except Exception as e:
+            logger.debug(f"Calibration skipped: {e}")
 
         # Add metadata
         predictions["race_name"] = race_name
@@ -175,10 +228,22 @@ class PredictionPipeline:
         predictions["sessions_used"] = ", ".join(available_sessions)
         predictions["confidence"] = self.bayesian.get_confidence_level()
 
-        # Feature importance for explainability
+        # Feature importance (global) for back-compat.
         importance = self.trainer.xgb_model.get_feature_importance(FEATURE_COLUMNS)
         if not importance.empty:
             predictions.attrs["feature_importance"] = importance
+
+        # Phase 5.4: per-driver SHAP explanations.
+        try:
+            import shap  # noqa: F401
+            self._attach_shap(predictions, features_df, X)
+        except ImportError:
+            logger.debug("shap not installed — skipping per-driver explanations")
+        except Exception as e:
+            logger.debug(f"SHAP computation skipped: {e}")
+
+        # Raw feature matrix (for per-driver explainability in dashboards)
+        predictions.attrs["features_df"] = features_df
 
         return predictions
 
@@ -248,6 +313,81 @@ class PredictionPipeline:
         # Try previous season
         prev_drivers = self.storage.get_all_drivers_for_season(year - 1)
         return prev_drivers
+
+    def _attach_shap(self, predictions: pd.DataFrame,
+                      features_df: pd.DataFrame, X: pd.DataFrame) -> None:
+        """Attach a top-3 SHAP attribution dict per driver.
+
+        Stored on predictions.attrs['shap_by_driver'] as
+            { driver_id: [(feature_name, shap_value), ...] }
+        Uses the XGBoost model because TreeExplainer is fast and stable.
+        """
+        import shap
+        xgb_raw = getattr(self.trainer.xgb_model, "model", None)
+        if xgb_raw is None:
+            return
+        explainer = shap.TreeExplainer(xgb_raw)
+        shap_vals = explainer.shap_values(X)
+
+        by_driver: dict[str, list[tuple[str, float]]] = {}
+        for idx, driver_id in enumerate(features_df["driver_id"].tolist()):
+            row_sv = shap_vals[idx]
+            # Sort by absolute magnitude, take top 4.
+            order = np.argsort(-np.abs(row_sv))[:4]
+            by_driver[driver_id] = [
+                (FEATURE_COLUMNS[i], float(row_sv[i])) for i in order
+            ]
+        predictions.attrs["shap_by_driver"] = by_driver
+
+    def _resolve_grid(self, year: int, round_num: int, race_id: int,
+                       drivers: list[dict],
+                       available_sessions: list[str] | None,
+                       race_weather: dict | None) -> dict[str, int]:
+        """Return driver_id -> grid_position map.
+
+        Prefers actual grid from results if quali has already happened,
+        falls back to the qualifying model's prediction.
+        """
+        # Actual grid from stored race results.
+        actual = self.storage.get_results(race_id)
+        if not actual.empty and "grid_position" in actual.columns:
+            real_grid = {
+                str(row["driver_id"]): int(row["grid_position"])
+                for _, row in actual.iterrows()
+                if pd.notna(row["grid_position"]) and int(row["grid_position"]) > 0
+            }
+            if real_grid:
+                logger.info(f"Using actual grid positions for {len(real_grid)} drivers")
+                return real_grid
+
+        # Predict grid with the qualifying model.
+        try:
+            self.trainer.load_models()
+            if self.trainer.qual_model.model is None:
+                return {}
+        except Exception:
+            return {}
+
+        features_df = self.feature_builder.build_race_features(
+            year, round_num, drivers, available_sessions or None, race_weather,
+            grid_map=None,
+        )
+        if features_df.empty:
+            return {}
+
+        quali_feature_cols = [c for c in FEATURE_COLUMNS if c != "predicted_grid_position"]
+        X_q = features_df[quali_feature_cols].fillna(0.0)
+        try:
+            grid_df = self.trainer.qual_model.predict_grid(
+                X_q, features_df["driver_id"].tolist()
+            )
+        except Exception as e:
+            logger.warning(f"Qualifying prediction failed, using default grid: {e}")
+            return {}
+
+        pred_grid = dict(zip(grid_df["driver_id"], grid_df["predicted_grid_position"]))
+        logger.info(f"Predicted grid for {len(pred_grid)} drivers via quali model")
+        return pred_grid
 
     def _analyze_upgrades(self, race_id: int, race_date: str):
         """Scrape and analyze upgrade news for all teams."""

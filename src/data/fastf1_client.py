@@ -244,6 +244,64 @@ class FastF1Client:
             "is_wet": int(weather["Rainfall"].any()) if "Rainfall" in weather.columns else 0,
         }
 
+    def collect_preseason_test(self, year: int, storage: Storage) -> int:
+        """Collect Bahrain pre-season test sessions and store as FP rows.
+
+        FastF1 exposes these via the "testing" helper. We tag rows with
+        session_type PRE1/PRE2/PRE3 so they're filterable but reuse the
+        FP storage schema. Returns the number of driver-sessions stored.
+
+        Used by the regulation-year cold-start path to seed Bayesian
+        priors before the first real race.
+        """
+        stored = 0
+        # FastF1's testing API changed across versions; try both.
+        try:
+            # Newer FastF1: fastf1.get_testing_event / get_testing_session
+            for test_day in (1, 2, 3):
+                session_type = f"PRE{test_day}"
+                try:
+                    sess = fastf1.get_testing_session(year, 1, test_day)
+                    sess.load()
+                except Exception:
+                    continue
+
+                # Use a pseudo-race row so fp_sessions can hang off it.
+                pseudo_round = -test_day  # negative = pre-season marker
+                race_id = storage.save_race(
+                    year=year,
+                    round_num=pseudo_round,
+                    name=f"{year} Pre-Season Test Day {test_day}",
+                    circuit_id="bahrain",
+                    date=f"{year}-02-{20 + test_day:02d}",
+                    circuit_name="Bahrain International Circuit",
+                    country="Bahrain",
+                )
+
+                for driver_num in sess.drivers:
+                    try:
+                        driver_laps = sess.laps.pick_drivers(driver_num)
+                        if driver_laps.empty:
+                            continue
+                        info = sess.get_driver(driver_num)
+                        features = self._compute_driver_fp_features(driver_laps, sess)
+                        storage.save_fp_session(
+                            race_id=race_id,
+                            session_type=session_type,
+                            driver_id=info.Abbreviation,
+                            driver_name=f"{info.FirstName} {info.LastName}",
+                            team=info.TeamName,
+                            data=features,
+                        )
+                        stored += 1
+                    except Exception as e:
+                        logger.debug(f"Skipping pre-season driver {driver_num}: {e}")
+        except Exception as e:
+            logger.warning(f"Pre-season testing ingest skipped: {e}")
+
+        logger.info(f"Pre-season testing: stored {stored} driver-sessions for {year}")
+        return stored
+
     def collect_season(self, year: int, storage: Storage):
         """Collect all data for a full season and save to storage."""
         schedule = self.get_event_schedule(year)

@@ -7,7 +7,8 @@ from src.data.storage import Storage
 
 
 def extract_team_features(storage: Storage, team: str,
-                           year: int, round_num: int) -> dict:
+                           year: int, round_num: int,
+                           as_of_date: str | None = None) -> dict:
     """Extract all team-level features.
 
     Args:
@@ -15,14 +16,15 @@ def extract_team_features(storage: Storage, team: str,
         team: Team name.
         year: Season year.
         round_num: Race round number.
+        as_of_date: ISO date cutoff. Required for leakage-safe training.
 
     Returns:
         Dict of feature name -> value.
     """
     features = {}
 
-    # Team Elo rating
-    features["team_elo"] = storage.get_latest_elo("team", team)
+    # Team Elo rating (strictly before race)
+    features["team_elo"] = storage.get_latest_elo("team", team, before_date=as_of_date)
 
     # Constructor championship position
     c_standings = storage.get_constructor_standings_before_race(year, round_num)
@@ -35,21 +37,23 @@ def extract_team_features(storage: Storage, team: str,
     features.setdefault("team_constructor_points", 0.0)
 
     # Recent form (team points over last 5 races)
-    features["team_recent_form"] = _compute_team_form(storage, team, year, round_num)
+    features["team_recent_form"] = _compute_team_form(
+        storage, team, year, round_num, as_of_date=as_of_date
+    )
 
     # Development trajectory (slope of performance)
     features["team_development_trajectory"] = _compute_dev_trajectory(
-        storage, team, year, round_num
+        storage, team, year, round_num, as_of_date=as_of_date
     )
 
     # Pit stop performance
-    pit_stats = _compute_pit_stats(storage, team)
+    pit_stats = _compute_pit_stats(storage, team, as_of_date=as_of_date)
     features["team_pit_stop_avg"] = pit_stats["avg"]
     features["team_pit_stop_consistency"] = pit_stats["std"]
 
     # Reliability score
     features["team_reliability_score"] = _compute_reliability(
-        storage, team, year, round_num
+        storage, team, year, round_num, as_of_date=as_of_date
     )
 
     return features
@@ -57,7 +61,8 @@ def extract_team_features(storage: Storage, team: str,
 
 def _compute_team_form(storage: Storage, team: str,
                         year: int, round_num: int,
-                        window: int = 5) -> float:
+                        window: int = 5,
+                        as_of_date: str | None = None) -> float:
     """Compute weighted average team performance over recent races."""
     races = storage.get_races_for_season(year)
 
@@ -66,10 +71,16 @@ def _compute_team_form(storage: Storage, team: str,
         prev_races = storage.get_races_for_season(year - 1)
         races = prev_races + races
 
-    # Get races before current round
+    # Get races before current round (and before as_of_date if provided)
     recent_race_ids = []
     for race in reversed(races):
-        if race["year"] < year or (race["year"] == year and race["round"] < round_num):
+        before_round = (
+            race["year"] < year or (race["year"] == year and race["round"] < round_num)
+        )
+        before_cutoff = (
+            as_of_date is None or (race.get("date") and race["date"] < as_of_date)
+        )
+        if before_round and before_cutoff:
             recent_race_ids.append(race["id"])
         if len(recent_race_ids) >= window:
             break
@@ -101,7 +112,8 @@ def _compute_team_form(storage: Storage, team: str,
 
 def _compute_dev_trajectory(storage: Storage, team: str,
                              year: int, round_num: int,
-                             window: int = 8) -> float:
+                             window: int = 8,
+                             as_of_date: str | None = None) -> float:
     """Compute slope of team performance over recent races.
 
     Negative slope = improving, positive = declining.
@@ -112,7 +124,13 @@ def _compute_dev_trajectory(storage: Storage, team: str,
 
     recent = []
     for race in reversed(all_races):
-        if race["year"] < year or (race["year"] == year and race["round"] < round_num):
+        before_round = (
+            race["year"] < year or (race["year"] == year and race["round"] < round_num)
+        )
+        before_cutoff = (
+            as_of_date is None or (race.get("date") and race["date"] < as_of_date)
+        )
+        if before_round and before_cutoff:
             results = storage.get_results(race["id"])
             if not results.empty:
                 team_results = results[results["team"] == team]
@@ -133,9 +151,10 @@ def _compute_dev_trajectory(storage: Storage, team: str,
     return slope  # Negative = improving
 
 
-def _compute_pit_stats(storage: Storage, team: str) -> dict:
+def _compute_pit_stats(storage: Storage, team: str,
+                        as_of_date: str | None = None) -> dict:
     """Compute team pit stop statistics."""
-    pit_data = storage.get_team_pit_stops(team, limit=40)
+    pit_data = storage.get_team_pit_stops(team, limit=40, before_date=as_of_date)
 
     if pit_data.empty or "duration" not in pit_data.columns:
         return {"avg": 25.0, "std": 2.0}
@@ -155,7 +174,8 @@ def _compute_pit_stats(storage: Storage, team: str) -> dict:
 
 def _compute_reliability(storage: Storage, team: str,
                           year: int, round_num: int,
-                          window: int = 10) -> float:
+                          window: int = 10,
+                          as_of_date: str | None = None) -> float:
     """Compute team mechanical reliability score (0 = perfect, 1 = terrible)."""
     races = storage.get_races_for_season(year)
     prev_races = storage.get_races_for_season(year - 1)
@@ -166,7 +186,13 @@ def _compute_reliability(storage: Storage, team: str,
 
     count = 0
     for race in reversed(all_races):
-        if race["year"] < year or (race["year"] == year and race["round"] < round_num):
+        before_round = (
+            race["year"] < year or (race["year"] == year and race["round"] < round_num)
+        )
+        before_cutoff = (
+            as_of_date is None or (race.get("date") and race["date"] < as_of_date)
+        )
+        if before_round and before_cutoff:
             results = storage.get_results(race["id"])
             if results.empty:
                 continue

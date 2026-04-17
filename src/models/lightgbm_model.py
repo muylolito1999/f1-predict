@@ -11,6 +11,33 @@ import lightgbm as lgb
 logger = logging.getLogger(__name__)
 
 
+def _podium_label_gain(max_drivers: int = 22) -> list[float]:
+    """Exponential gain over top-5 positions, near-zero elsewhere.
+
+    LightGBM's label_gain is indexed by relevance. Our relevance
+    mapping is relevance = max_y - y + 1, so higher relevance = better
+    finish. We want the loss to prioritize getting P1..P5 right.
+
+    Example for 20 drivers (relevance range 1..20):
+    - Relevance 20 (P1) → gain 31
+    - Relevance 19 (P2) → gain 15
+    - Relevance 18 (P3) → gain 7
+    - Relevance 17 (P4) → gain 3
+    - Relevance 16 (P5) → gain 1
+    - Relevance 1..15 (P20..P6) → small linear gain so ordering outside
+      the points doesn't get NaN gradients.
+    """
+    gain = [0.0] * (max_drivers + 1)
+    for rel in range(1, max_drivers + 1):
+        pos = max_drivers - rel + 1
+        if pos <= 5:
+            gain[rel] = float(2 ** (6 - pos) - 1)  # P1=31, P2=15, ..., P5=1
+        else:
+            # Tiny linear penalty so positions 6..22 are still ordered.
+            gain[rel] = 0.01 * (max_drivers - pos + 1)
+    return gain
+
+
 class LightGBMRanker:
     """LightGBM-based LambdaRank model."""
 
@@ -20,18 +47,25 @@ class LightGBMRanker:
         self.feature_importances_ = None
 
     def _default_params(self) -> dict:
+        # Deeper + narrower vs XGBoost to reduce ensemble correlation,
+        # and a podium-weighted label_gain (Phase 2.4) so the loss cares
+        # strongly about top-5 positions and is nearly indifferent about
+        # P11-vs-P12 ordering.
         return {
             "objective": "lambdarank",
             "metric": "ndcg",
-            "ndcg_eval_at": [5, 10, 20],
-            "learning_rate": 0.05,
-            "num_leaves": 63,
-            "n_estimators": 500,
-            "subsample": 0.8,
-            "colsample_bytree": 0.8,
-            "min_child_samples": 10,
-            "reg_alpha": 0.1,
-            "reg_lambda": 1.0,
+            "ndcg_eval_at": [3, 5, 10],
+            "lambdarank_truncation_level": 5,
+            "label_gain": _podium_label_gain(max_drivers=22),
+            "learning_rate": 0.04,
+            "num_leaves": 127,
+            "max_depth": -1,
+            "n_estimators": 600,
+            "subsample": 0.85,
+            "colsample_bytree": 0.9,
+            "min_child_samples": 6,
+            "reg_alpha": 0.05,
+            "reg_lambda": 0.8,
             "random_state": 42,
             "n_jobs": -1,
             "verbose": -1,

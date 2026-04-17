@@ -13,11 +13,18 @@ dependencies = [
     "scikit-learn>=1.4",
     "xgboost>=2.0",
     "lightgbm>=4.3",
+    "catboost>=1.2",
+    "torch>=2.2",
+    "optuna>=3.5",
+    "shap>=0.45",
+    "matplotlib>=3.8",
     "openai>=1.12",
     "beautifulsoup4>=4.12",
     "lxml>=5.0",
     "rich>=13.7",
     "tabulate>=0.9",
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
 ]
 
 [project.optional-dependencies]

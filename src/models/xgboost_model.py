@@ -20,17 +20,18 @@ class XGBoostRanker:
         self.feature_importances_ = None
 
     def _default_params(self) -> dict:
+        # Shallower + wider vs LightGBM to reduce ensemble correlation.
         return {
             "objective": "rank:pairwise",
             "learning_rate": 0.05,
-            "max_depth": 6,
-            "n_estimators": 500,
-            "subsample": 0.8,
-            "colsample_bytree": 0.8,
-            "min_child_weight": 5,
-            "gamma": 0.1,
-            "reg_alpha": 0.1,
-            "reg_lambda": 1.0,
+            "max_depth": 4,
+            "n_estimators": 600,
+            "subsample": 0.75,
+            "colsample_bytree": 0.7,
+            "min_child_weight": 8,
+            "gamma": 0.2,
+            "reg_alpha": 0.15,
+            "reg_lambda": 1.5,
             "random_state": 42,
             "n_jobs": -1,
         }

@@ -5,10 +5,21 @@ import pandas as pd
 
 from src.data.storage import Storage
 
+# Physics constants for fuel/tyre correction.
+# F1 cars burn ~1.8 kg/lap of fuel; each kg = ~0.035 s/lap lap-time penalty.
+# Net fuel burn effect: cars get ~0.063 s/lap faster each lap due to fuel
+# burn alone. The raw polyfit slope (time ~ stint_lap) therefore contains
+# TYRE_DEG + FUEL_EFFECT (negative), so to isolate tyre degradation we add
+# the fuel term back.
+FUEL_EFFECT_PER_LAP_SEC = 0.063
+# Typical FP long-run stint length for intercept back-projection.
+ASSUMED_STINT_LENGTH = 10
+
 
 def extract_practice_features(storage: Storage, race_id: int,
                                 driver_id: str,
-                                sessions: list[str] = None) -> dict:
+                                sessions: list[str] = None,
+                                team: str | None = None) -> dict:
     """Extract all FP-derived features for a driver at a race.
 
     Args:
@@ -67,6 +78,33 @@ def extract_practice_features(storage: Storage, race_id: int,
         if pd.notna(row["long_run_degradation"]):
             features[f"{sess.lower()}_degradation"] = row["long_run_degradation"]
 
+        # Fuel/tyre-age corrected long-run pace.
+        # The stored long_run_pace is the MEAN of stint lap times, which
+        # mixes raw pace with fuel burn and tyre wear. Project back to
+        # lap 0 of the stint: intercept = mean - slope * stint_len/2.
+        # Then isolate true tyre deg: deg = slope + fuel_effect (fuel
+        # makes the car faster over the stint, so we add it back).
+        if pd.notna(row["long_run_pace"]) and pd.notna(row["long_run_degradation"]):
+            slope = row["long_run_degradation"]
+            intercept = row["long_run_pace"] - slope * (ASSUMED_STINT_LENGTH / 2.0)
+            features[f"{sess.lower()}_long_run_intercept"] = intercept
+            features[f"{sess.lower()}_tyre_deg_corrected"] = slope + FUEL_EFFECT_PER_LAP_SEC
+
+            # Delta to field leader on the corrected intercept
+            lr_pace = fp_data["long_run_pace"].dropna()
+            lr_deg = fp_data["long_run_degradation"].dropna()
+            if not lr_pace.empty and not lr_deg.empty:
+                merged = fp_data[["long_run_pace", "long_run_degradation"]].dropna()
+                if not merged.empty:
+                    field_intercepts = (
+                        merged["long_run_pace"]
+                        - merged["long_run_degradation"] * (ASSUMED_STINT_LENGTH / 2.0)
+                    )
+                    leader_intercept = field_intercepts.min()
+                    features[f"{sess.lower()}_long_run_intercept_delta"] = (
+                        intercept - leader_intercept
+                    )
+
         # Short run pace
         if pd.notna(row["short_run_pace"]):
             all_sr = fp_data["short_run_pace"].dropna()
@@ -103,7 +141,56 @@ def extract_practice_features(storage: Storage, race_id: int,
     # Aggregate features (best across all sessions)
     _add_aggregate_features(features, sessions)
 
+    # Same-weekend teammate delta — strongest single predictor when FP data
+    # is available, because it nulls out shared team/car effects.
+    if team:
+        features["teammate_fp_pace_delta"] = _teammate_fp_pace_delta(
+            storage, race_id, driver_id, team, sessions
+        )
+
     return features
+
+
+def _teammate_fp_pace_delta(storage: Storage, race_id: int, driver_id: str,
+                             team: str, sessions: list[str]) -> float:
+    """Fuel-corrected long-run pace gap to teammate on the current weekend.
+
+    Negative = faster than teammate, positive = slower. Defaults to 0 when
+    teammate data is missing.
+    """
+    session_priority = ["FP3", "FP2", "FP1"]
+    ordered = [s for s in session_priority if s in (sessions or session_priority)]
+
+    for sess in ordered:
+        fp_data = storage.get_fp_data(race_id, sess)
+        if fp_data.empty:
+            continue
+
+        team_rows = fp_data[fp_data["team"] == team]
+        if len(team_rows) < 2:
+            continue
+
+        # Corrected intercept per driver on this session
+        def _intercept(row):
+            pace = row["long_run_pace"]
+            slope = row["long_run_degradation"]
+            if pd.isna(pace) or pd.isna(slope):
+                return None
+            return pace - slope * (ASSUMED_STINT_LENGTH / 2.0)
+
+        my_row = team_rows[team_rows["driver_id"] == driver_id]
+        tm_row = team_rows[team_rows["driver_id"] != driver_id]
+        if my_row.empty or tm_row.empty:
+            continue
+
+        my_int = _intercept(my_row.iloc[0])
+        tm_int = _intercept(tm_row.iloc[0])
+        if my_int is None or tm_int is None:
+            continue
+
+        return float(my_int - tm_int)
+
+    return 0.0
 
 
 def _add_cross_session_features(features: dict,
@@ -188,3 +275,21 @@ def _add_aggregate_features(features: dict, sessions: list[str]):
     ]
     if speeds:
         features["fp_speed_trap_max"] = max(speeds)
+
+    # Fuel-corrected long-run intercept (best across sessions — FP3 is most
+    # representative of qualifying/race fuel). Prefer later sessions.
+    session_priority = ["FP3", "FP2", "FP1"]
+    for s in session_priority:
+        key = f"{s.lower()}_long_run_intercept_delta"
+        if key in features:
+            features["fp_long_run_pace_fuel_corrected"] = features[key]
+            break
+
+    # Corrected tyre degradation (mean across sessions)
+    corrected_degs = [
+        features[f"{s.lower()}_tyre_deg_corrected"]
+        for s in sessions
+        if f"{s.lower()}_tyre_deg_corrected" in features
+    ]
+    if corrected_degs:
+        features["fp_tyre_deg_corrected"] = np.mean(corrected_degs)

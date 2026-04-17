@@ -165,8 +165,17 @@ def predict(ctx, race, year, sessions, skip_news, skip_weather):
               help="Season to backtest on")
 @click.option("--train-seasons", "-ts", multiple=True, type=int,
               help="Seasons to train on (default: all before backtest season)")
+@click.option("--output-json", default=None,
+              help="Write metrics JSON (e.g. reports/baseline.json)")
+@click.option("--stratify", is_flag=True,
+              help="Break out metrics by circuit type / weather / season phase")
+@click.option("--fit-calibrator", default=None,
+              help="Fit isotonic calibrator and save to this path")
+@click.option("--calibration-plot", default=None,
+              help="Write reliability diagrams PNG to this path")
 @click.pass_context
-def backtest(ctx, season, train_seasons):
+def backtest(ctx, season, train_seasons, output_json, stratify,
+             fit_calibrator, calibration_plot):
     """Backtest model predictions against actual race results."""
     from scripts.backtest import run_backtest
 
@@ -176,7 +185,46 @@ def backtest(ctx, season, train_seasons):
     if not train_seasons:
         train_seasons = list(range(2022, season))
 
-    run_backtest(storage, config, list(train_seasons), season)
+    run_backtest(
+        storage, config, list(train_seasons), season,
+        output_json=output_json, stratify=stratify,
+        fit_calibrator=fit_calibrator, calibration_plot=calibration_plot,
+    )
+
+
+@cli.command("tune")
+@click.option("--seasons", "-s", multiple=True, type=int, required=True,
+              help="Seasons to tune on")
+@click.option("--trials", "-n", type=int, default=40,
+              help="Number of Optuna trials per model")
+@click.pass_context
+def tune(ctx, seasons, trials):
+    """Run Optuna hyperparameter search (saves models/best_params.json)."""
+    from src.models.trainer import Trainer
+
+    storage = ctx.obj["storage"]
+    config = ctx.obj["config"]
+    trainer = Trainer(
+        storage, model_dir=config.get("model", {}).get("save_dir", "models")
+    )
+    trainer.tune(list(seasons), n_trials=trials)
+    click.echo("Hyperparameter tuning complete.")
+
+
+@cli.command("collect-preseason")
+@click.option("--year", "-y", type=int, required=True, help="Regulation year")
+@click.pass_context
+def collect_preseason(ctx, year):
+    """Collect Bahrain pre-season testing data (for cold-start priors)."""
+    from src.data.fastf1_client import FastF1Client
+
+    storage = ctx.obj["storage"]
+    config = ctx.obj["config"]
+    client = FastF1Client(
+        cache_dir=config.get("data", {}).get("cache_dir", "data/cache")
+    )
+    n = client.collect_preseason_test(year, storage)
+    click.echo(f"Stored {n} pre-season driver-sessions for {year}")
 
 
 @cli.command("explain")

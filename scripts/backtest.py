@@ -4,8 +4,10 @@ Walk-forward backtesting: for each race in the test season,
 train on all prior data and predict.
 """
 
+import json
 import logging
 import sys
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -22,7 +24,11 @@ logger = logging.getLogger(__name__)
 
 
 def run_backtest(storage: Storage, config: dict,
-                  train_seasons: list[int], test_season: int):
+                  train_seasons: list[int], test_season: int,
+                  output_json: str | None = None,
+                  stratify: bool = False,
+                  fit_calibrator: str | None = None,
+                  calibration_plot: str | None = None):
     """Run walk-forward backtest on a season.
 
     Args:
@@ -56,6 +62,8 @@ def run_backtest(storage: Storage, config: dict,
         "position_errors": [],
         "races_evaluated": 0,
     }
+    per_race_records: list[dict] = []
+    per_driver_records: list[dict] = []
 
     for race in test_races:
         race_id = race["id"]
@@ -141,7 +149,45 @@ def run_backtest(storage: Storage, config: dict,
             actual_p = actual_pos.loc[driver_id]
             all_metrics["position_errors"].append(abs(pred_pos - actual_p))
 
+        # Capture per-driver probabilities + actual position for calibration.
+        for _, pred_row in predictions.iterrows():
+            did = pred_row["driver_id"]
+            actual_row = actual[actual["driver_id"] == did]
+            if actual_row.empty or pd.isna(actual_row.iloc[0].get("finish_position")):
+                continue
+            per_driver_records.append({
+                "year": test_season,
+                "round": round_num,
+                "driver_id": did,
+                "win_probability": float(pred_row.get("win_probability", 0.0)),
+                "podium_probability": float(pred_row.get("podium_probability", 0.0)),
+                "points_probability": float(pred_row.get("points_probability", 0.0)),
+                "actual_position": int(actual_row.iloc[0]["finish_position"]),
+            })
+
         all_metrics["races_evaluated"] += 1
+
+        # Per-race record for stratified analysis
+        race_row = storage.get_race(test_season, round_num) or {}
+        circuit_id = race_row.get("circuit_id", "")
+        weather_row = storage.get_weather(race_id, "R") or {}
+        per_race_records.append({
+            "year": test_season,
+            "round": round_num,
+            "race_name": race_name,
+            "circuit_id": circuit_id,
+            "is_wet": int(bool(weather_row.get("is_wet"))),
+            "pred_winner": pred_winner,
+            "actual_winner": actual_winner,
+            "top1_correct": int(pred_winner == actual_winner),
+            "top3_correct": int(actual_winner in pred_top3),
+            "top5_correct": int(actual_winner in pred_top5),
+            "spearman": float(corr) if len(common) > 2 else None,
+            "mean_position_error": (
+                float(np.mean([abs(pred_order.loc[d] - actual_pos.loc[d]) for d in common]))
+                if len(common) > 0 else None
+            ),
+        })
 
         # Display individual race comparison
         logger.info(f"\nR{round_num} {race_name}:")
@@ -179,7 +225,125 @@ def run_backtest(storage: Storage, config: dict,
     logger.info(f"{'='*50}")
     display_metrics(summary)
 
+    if calibration_plot:
+        _write_calibration_plot(per_driver_records, calibration_plot, test_season)
+
+    if fit_calibrator:
+        from src.models.calibration import ProbabilityCalibrator
+        cal = ProbabilityCalibrator()
+        cal.fit(per_driver_records)
+        cal.save(fit_calibrator)
+        logger.info(f"Calibrator saved to {fit_calibrator}")
+        summary["calibrator_path"] = fit_calibrator
+
+    if stratify:
+        stratified = _stratify_metrics(per_race_records, storage)
+        logger.info("\nStratified metrics:")
+        for bucket_name, bucket_metrics in stratified.items():
+            logger.info(f"  {bucket_name}: {bucket_metrics}")
+        summary["stratified"] = stratified
+
+    if output_json:
+        out_path = Path(output_json)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "summary": summary,
+            "per_race": per_race_records,
+            "train_seasons": train_seasons,
+            "test_season": test_season,
+        }
+        out_path.write_text(json.dumps(payload, indent=2, default=_json_default))
+        logger.info(f"Metrics written to {out_path}")
+
     return summary
+
+
+def _json_default(obj):
+    """JSON encoder for numpy types."""
+    if isinstance(obj, (np.floating,)):
+        return float(obj)
+    if isinstance(obj, (np.integer,)):
+        return int(obj)
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    raise TypeError(f"Not JSON serializable: {type(obj)}")
+
+
+def _write_calibration_plot(records: list[dict], path: str, season: int):
+    """Reliability diagram for win/podium/points probabilities."""
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except ImportError:
+        logger.warning("matplotlib not installed — skipping calibration plot")
+        return
+
+    if not records:
+        return
+
+    fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+    for ax, (key, cutoff) in zip(axes, [
+        ("win_probability", 1),
+        ("podium_probability", 3),
+        ("points_probability", 10),
+    ]):
+        probs = np.array([r[key] for r in records])
+        outcomes = np.array([int(r["actual_position"] <= cutoff) for r in records])
+        # Bin predictions into deciles and plot mean predicted vs observed.
+        bins = np.linspace(0, 1, 11)
+        idx = np.digitize(probs, bins) - 1
+        xs, ys = [], []
+        for b in range(10):
+            mask = idx == b
+            if mask.sum() < 3:
+                continue
+            xs.append(probs[mask].mean())
+            ys.append(outcomes[mask].mean())
+        ax.plot([0, 1], [0, 1], "k--", alpha=0.4, label="perfect")
+        ax.plot(xs, ys, "o-", label=f"n={len(probs)}")
+        ax.set_title(f"{key} (top {cutoff}) — {season}")
+        ax.set_xlabel("predicted")
+        ax.set_ylabel("observed")
+        ax.set_xlim(0, 1)
+        ax.set_ylim(0, 1)
+        ax.legend()
+    fig.tight_layout()
+    out = Path(path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out, dpi=100)
+    plt.close(fig)
+    logger.info(f"Calibration plot written to {out}")
+
+
+def _stratify_metrics(records: list[dict], storage: Storage) -> dict:
+    """Bucket per-race metrics by circuit type, weather, season position, sprint."""
+    from src.features.circuit import _find_circuit_metadata
+
+    def _agg(rows: list[dict]) -> dict:
+        if not rows:
+            return {"n": 0}
+        n = len(rows)
+        return {
+            "n": n,
+            "top1": sum(r["top1_correct"] for r in rows) / n,
+            "top3": sum(r["top3_correct"] for r in rows) / n,
+            "top5": sum(r["top5_correct"] for r in rows) / n,
+            "spearman": float(np.mean([r["spearman"] for r in rows if r["spearman"] is not None])) if any(r["spearman"] is not None for r in rows) else None,
+        }
+
+    buckets: dict[str, list[dict]] = {}
+
+    for r in records:
+        meta = _find_circuit_metadata(r["circuit_id"])
+        ctype = meta.get("type", "unknown") if meta else "unknown"
+        buckets.setdefault(f"circuit_type:{ctype}", []).append(r)
+        buckets.setdefault(f"wet:{bool(r['is_wet'])}", []).append(r)
+        buckets.setdefault(
+            "season_phase:early" if r["round"] <= 5 else "season_phase:rest", []
+        ).append(r)
+
+    return {k: _agg(v) for k, v in buckets.items()}
 
 
 if __name__ == "__main__":
@@ -197,9 +361,22 @@ if __name__ == "__main__":
     parser.add_argument("--train-seasons", "-ts", nargs="+", type=int,
                         help="Seasons for training (default: all before test)")
     parser.add_argument("--db-path", default="data/f1_predict.db")
+    parser.add_argument("--output-json", default=None,
+                        help="Write metrics JSON to this path (e.g. reports/baseline.json)")
+    parser.add_argument("--stratify", action="store_true",
+                        help="Break out metrics by circuit type, weather, season phase")
+    parser.add_argument("--fit-calibrator", default=None,
+                        help="Fit isotonic calibrator on this run and save to path")
+    parser.add_argument("--calibration-plot", default=None,
+                        help="Write reliability diagrams PNG to this path")
     args = parser.parse_args()
 
     storage = Storage(db_path=args.db_path)
     train_seasons = args.train_seasons or list(range(2022, args.season))
 
-    run_backtest(storage, {}, train_seasons, args.season)
+    run_backtest(
+        storage, {}, train_seasons, args.season,
+        output_json=args.output_json, stratify=args.stratify,
+        fit_calibrator=args.fit_calibrator,
+        calibration_plot=args.calibration_plot,
+    )

@@ -358,8 +358,18 @@ class Storage:
 
     def get_driver_results_at_circuit(self, driver_id: str,
                                        circuit_id: str,
-                                       limit: int = 5) -> pd.DataFrame:
+                                       limit: int = 5,
+                                       before_date: str | None = None) -> pd.DataFrame:
         with self._connect() as conn:
+            if before_date:
+                return pd.read_sql_query("""
+                    SELECT r.*, ra.year, ra.round
+                    FROM results r
+                    JOIN races ra ON r.race_id = ra.id
+                    WHERE r.driver_id=? AND ra.circuit_id=? AND ra.date < ?
+                    ORDER BY ra.year DESC, ra.round DESC
+                    LIMIT ?
+                """, conn, params=(driver_id, circuit_id, before_date, limit))
             return pd.read_sql_query("""
                 SELECT r.*, ra.year, ra.round
                 FROM results r
@@ -369,10 +379,20 @@ class Storage:
                 LIMIT ?
             """, conn, params=(driver_id, circuit_id, limit))
 
-    def get_recent_results(self, driver_id: str, limit: int = 5) -> pd.DataFrame:
+    def get_recent_results(self, driver_id: str, limit: int = 5,
+                           before_date: str | None = None) -> pd.DataFrame:
         with self._connect() as conn:
+            if before_date:
+                return pd.read_sql_query("""
+                    SELECT r.*, ra.year, ra.round, ra.name as race_name, ra.date as race_date
+                    FROM results r
+                    JOIN races ra ON r.race_id = ra.id
+                    WHERE r.driver_id=? AND ra.date < ?
+                    ORDER BY ra.year DESC, ra.round DESC
+                    LIMIT ?
+                """, conn, params=(driver_id, before_date, limit))
             return pd.read_sql_query("""
-                SELECT r.*, ra.year, ra.round, ra.name as race_name
+                SELECT r.*, ra.year, ra.round, ra.name as race_name, ra.date as race_date
                 FROM results r
                 JOIN races ra ON r.race_id = ra.id
                 WHERE r.driver_id=?
@@ -380,14 +400,25 @@ class Storage:
                 LIMIT ?
             """, conn, params=(driver_id, limit))
 
-    def get_latest_elo(self, entity_type: str, entity_id: str) -> float:
+    def get_latest_elo(self, entity_type: str, entity_id: str,
+                       before_date: str | None = None) -> float:
         with self._connect() as conn:
-            row = conn.execute("""
-                SELECT rating FROM elo_ratings
-                WHERE entity_type=? AND entity_id=?
-                ORDER BY year DESC, round DESC
-                LIMIT 1
-            """, (entity_type, entity_id)).fetchone()
+            if before_date:
+                row = conn.execute("""
+                    SELECT er.rating
+                    FROM elo_ratings er
+                    JOIN races ra ON er.year = ra.year AND er.round = ra.round
+                    WHERE er.entity_type=? AND er.entity_id=? AND ra.date < ?
+                    ORDER BY ra.date DESC
+                    LIMIT 1
+                """, (entity_type, entity_id, before_date)).fetchone()
+            else:
+                row = conn.execute("""
+                    SELECT rating FROM elo_ratings
+                    WHERE entity_type=? AND entity_id=?
+                    ORDER BY year DESC, round DESC
+                    LIMIT 1
+                """, (entity_type, entity_id)).fetchone()
             return row[0] if row else 1500.0
 
     def get_team_upgrades(self, team: str, before_date: str = None,
@@ -404,8 +435,19 @@ class Storage:
                 conn, params=(team,)
             )
 
-    def get_team_pit_stops(self, team: str, limit: int = 20) -> pd.DataFrame:
+    def get_team_pit_stops(self, team: str, limit: int = 20,
+                           before_date: str | None = None) -> pd.DataFrame:
         with self._connect() as conn:
+            if before_date:
+                return pd.read_sql_query("""
+                    SELECT ps.*, r.driver_id, ra.year, ra.round
+                    FROM pit_stops ps
+                    JOIN results r ON ps.race_id = r.race_id AND ps.driver_id = r.driver_id
+                    JOIN races ra ON ps.race_id = ra.id
+                    WHERE r.team=? AND ra.date < ?
+                    ORDER BY ra.year DESC, ra.round DESC
+                    LIMIT ?
+                """, conn, params=(team, before_date, limit))
             return pd.read_sql_query("""
                 SELECT ps.*, r.driver_id, ra.year, ra.round
                 FROM pit_stops ps
