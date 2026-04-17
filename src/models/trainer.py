@@ -444,7 +444,12 @@ class Trainer:
 
     def _compute_recency_weights(self, X: pd.DataFrame,
                                   seasons: list[int]) -> np.ndarray:
-        """Compute sample weights giving more weight to recent data."""
+        """Compute sample weights giving more weight to recent data.
+
+        Returns one weight per sample. LightGBM accepts per-sample weights
+        directly. XGBoost ranker in newer versions requires per-GROUP
+        weights, so the XGBoost training path converts these internally.
+        """
         n = len(X)
         if n == 0:
             return np.array([])

@@ -61,7 +61,18 @@ class XGBoostRanker:
         }
 
         if sample_weights is not None:
-            fit_params["sample_weight"] = sample_weights
+            # XGBoost >=2 requires one weight PER GROUP (race), not per sample.
+            # Average the per-sample recency weights within each group.
+            sw = np.asarray(sample_weights, dtype=np.float64)
+            if len(sw) == sum(groups):
+                group_weights = []
+                offset = 0
+                for g in groups:
+                    group_weights.append(float(sw[offset:offset + g].mean()))
+                    offset += g
+                fit_params["sample_weight"] = np.asarray(group_weights)
+            else:
+                fit_params["sample_weight"] = sw
 
         if eval_set:
             X_val, y_val, groups_val = eval_set

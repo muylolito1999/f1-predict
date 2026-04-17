@@ -73,7 +73,7 @@ def display_prediction(predictions: pd.DataFrame):
         if has_range:
             p10 = row.get("position_p10", pos)
             p90 = row.get("position_p90", pos)
-            cells.append(f"P{int(p10)}–P{int(p90)}")
+            cells.append(f"P{int(p10)}-P{int(p90)}")
         cells.append(conf_bar)
         table.add_row(*cells, style=style)
 

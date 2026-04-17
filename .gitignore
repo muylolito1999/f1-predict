@@ -22,3 +22,7 @@ htmlcov/
 web/node_modules/
 web/dist/
 web/tsconfig.tsbuildinfo
+
+# Runtime artifacts
+catboost_info/
+.claude/

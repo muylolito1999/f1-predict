@@ -1,0 +1,245 @@
+{
+  "summary": {
+    "races_evaluated": 12,
+    "top1_accuracy": 0.6666666666666666,
+    "top3_accuracy": 1.0,
+    "top5_accuracy": 1.0,
+    "avg_spearman_correlation": 0.683625730994152,
+    "mean_position_error": 3.2301255230125525,
+    "median_position_error": 2.0,
+    "stratified": {
+      "circuit_type:unknown": {
+        "n": 5,
+        "top1": 1.0,
+        "top3": 1.0,
+        "top5": 1.0,
+        "spearman": 0.6241604010025062
+      },
+      "wet:True": {
+        "n": 4,
+        "top1": 0.5,
+        "top3": 1.0,
+        "top5": 1.0,
+        "spearman": 0.6714285714285714
+      },
+      "season_phase:early": {
+        "n": 5,
+        "top1": 0.8,
+        "top3": 1.0,
+        "top5": 1.0,
+        "spearman": 0.6815037593984961
+      },
+      "circuit_type:technical": {
+        "n": 3,
+        "top1": 0.6666666666666666,
+        "top3": 1.0,
+        "top5": 1.0,
+        "spearman": 0.7192982456140351
+      },
+      "wet:False": {
+        "n": 8,
+        "top1": 0.75,
+        "top3": 1.0,
+        "top5": 1.0,
+        "spearman": 0.6897243107769423
+      },
+      "circuit_type:street": {
+        "n": 3,
+        "top1": 0.3333333333333333,
+        "top3": 1.0,
+        "top5": 1.0,
+        "spearman": 0.7894736842105262
+      },
+      "season_phase:rest": {
+        "n": 7,
+        "top1": 0.5714285714285714,
+        "top3": 1.0,
+        "top5": 1.0,
+        "spearman": 0.6851414249910491
+      },
+      "circuit_type:high_speed": {
+        "n": 1,
+        "top1": 0.0,
+        "top3": 1.0,
+        "top5": 1.0,
+        "spearman": 0.556390977443609
+      }
+    }
+  },
+  "per_race": [
+    {
+      "year": 2025,
+      "round": 1,
+      "race_name": "Australian Grand Prix",
+      "circuit_id": "melbourne",
+      "is_wet": 1,
+      "pred_winner": "NOR",
+      "actual_winner": "NOR",
+      "top1_correct": 1,
+      "top3_correct": 1,
+      "top5_correct": 1,
+      "spearman": 0.5187969924812029,
+      "mean_position_error": 4.5
+    },
+    {
+      "year": 2025,
+      "round": 2,
+      "race_name": "Chinese Grand Prix",
+      "circuit_id": "shanghai",
+      "is_wet": 0,
+      "pred_winner": "PIA",
+      "actual_winner": "PIA",
+      "top1_correct": 1,
+      "top3_correct": 1,
+      "top5_correct": 1,
+      "spearman": 0.4240601503759398,
+      "mean_position_error": 4.8
+    },
+    {
+      "year": 2025,
+      "round": 3,
+      "race_name": "Japanese Grand Prix",
+      "circuit_id": "suzuka",
+      "is_wet": 0,
+      "pred_winner": "VER",
+      "actual_winner": "VER",
+      "top1_correct": 1,
+      "top3_correct": 1,
+      "top5_correct": 1,
+      "spearman": 0.9533834586466164,
+      "mean_position_error": 1.1
+    },
+    {
+      "year": 2025,
+      "round": 4,
+      "race_name": "Bahrain Grand Prix",
+      "circuit_id": "sakhir",
+      "is_wet": 0,
+      "pred_winner": "PIA",
+      "actual_winner": "PIA",
+      "top1_correct": 1,
+      "top3_correct": 1,
+      "top5_correct": 1,
+      "spearman": 0.7278195488721804,
+      "mean_position_error": 3.1
+    },
+    {
+      "year": 2025,
+      "round": 5,
+      "race_name": "Saudi Arabian Grand Prix",
+      "circuit_id": "jeddah",
+      "is_wet": 0,
+      "pred_winner": "VER",
+      "actual_winner": "PIA",
+      "top1_correct": 0,
+      "top3_correct": 1,
+      "top5_correct": 1,
+      "spearman": 0.7834586466165413,
+      "mean_position_error": 2.7
+    },
+    {
+      "year": 2025,
+      "round": 6,
+      "race_name": "Miami Grand Prix",
+      "circuit_id": "miami_gardens",
+      "is_wet": 1,
+      "pred_winner": "NOR",
+      "actual_winner": "PIA",
+      "top1_correct": 0,
+      "top3_correct": 1,
+      "top5_correct": 1,
+      "spearman": 0.8872180451127819,
+      "mean_position_error": 2.2
+    },
+    {
+      "year": 2025,
+      "round": 7,
+      "race_name": "Emilia Romagna Grand Prix",
+      "circuit_id": "imola",
+      "is_wet": 0,
+      "pred_winner": "PIA",
+      "actual_winner": "VER",
+      "top1_correct": 0,
+      "top3_correct": 1,
+      "top5_correct": 1,
+      "spearman": 0.7804511278195487,
+      "mean_position_error": 3.3
+    },
+    {
+      "year": 2025,
+      "round": 8,
+      "race_name": "Monaco Grand Prix",
+      "circuit_id": "monaco",
+      "is_wet": 0,
+      "pred_winner": "NOR",
+      "actual_winner": "NOR",
+      "top1_correct": 1,
+      "top3_correct": 1,
+      "top5_correct": 1,
+      "spearman": 0.6977443609022556,
+      "mean_position_error": 3.0
+    },
+    {
+      "year": 2025,
+      "round": 9,
+      "race_name": "Spanish Grand Prix",
+      "circuit_id": "barcelona",
+      "is_wet": 0,
+      "pred_winner": "PIA",
+      "actual_winner": "PIA",
+      "top1_correct": 1,
+      "top3_correct": 1,
+      "top5_correct": 1,
+      "spearman": 0.5719298245614035,
+      "mean_position_error": 3.3684210526315788
+    },
+    {
+      "year": 2025,
+      "round": 10,
+      "race_name": "Canadian Grand Prix",
+      "circuit_id": "montr\u00e9al",
+      "is_wet": 1,
+      "pred_winner": "RUS",
+      "actual_winner": "RUS",
+      "top1_correct": 1,
+      "top3_correct": 1,
+      "top5_correct": 1,
+      "spearman": 0.7233082706766917,
+      "mean_position_error": 3.1
+    },
+    {
+      "year": 2025,
+      "round": 11,
+      "race_name": "Austrian Grand Prix",
+      "circuit_id": "spielberg",
+      "is_wet": 0,
+      "pred_winner": "NOR",
+      "actual_winner": "NOR",
+      "top1_correct": 1,
+      "top3_correct": 1,
+      "top5_correct": 1,
+      "spearman": 0.5789473684210527,
+      "mean_position_error": 3.5
+    },
+    {
+      "year": 2025,
+      "round": 12,
+      "race_name": "British Grand Prix",
+      "circuit_id": "silverstone",
+      "is_wet": 1,
+      "pred_winner": "PIA",
+      "actual_winner": "NOR",
+      "top1_correct": 0,
+      "top3_correct": 1,
+      "top5_correct": 1,
+      "spearman": 0.556390977443609,
+      "mean_position_error": 4.1
+    }
+  ],
+  "train_seasons": [
+    2022,
+    2023,
+    2024
+  ],
+  "test_season": 2025
+}

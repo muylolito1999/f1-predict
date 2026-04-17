@@ -21,12 +21,21 @@ class HistoricalClient:
         self.session.headers.update({"User-Agent": "f1-predict/0.1"})
 
     def _get(self, endpoint: str, params: dict = None) -> dict:
-        """Make API request with rate limiting."""
+        """Make API request with rate limiting and 429 back-off."""
         url = f"{BASE_URL}/{endpoint}.json"
-        resp = self.session.get(url, params=params, timeout=30)
+        for attempt in range(6):
+            resp = self.session.get(url, params=params, timeout=30)
+            if resp.status_code == 429:
+                # Exponential back-off: 2s, 4s, 8s, 16s, 32s, 64s.
+                wait = 2 ** (attempt + 1)
+                logger.warning(f"429 rate-limited on {endpoint}; sleeping {wait}s")
+                time.sleep(wait)
+                continue
+            resp.raise_for_status()
+            time.sleep(0.8)  # Base rate limit
+            return resp.json()
         resp.raise_for_status()
-        time.sleep(0.5)  # Rate limiting
-        return resp.json()
+        return {}
 
     def get_season_races(self, year: int) -> list[dict]:
         """Get all races in a season."""
@@ -92,6 +101,14 @@ class HistoricalClient:
             round_num = int(race["round"])
             race_name = race["raceName"]
             circuit = race["Circuit"]
+
+            # Skip if race already has results (idempotent restart).
+            existing_race_id = storage.get_race_id(year, round_num)
+            if existing_race_id is not None:
+                existing_results = storage.get_results(existing_race_id)
+                if not existing_results.empty:
+                    logger.info(f"  Round {round_num}: {race_name} — already collected, skipping")
+                    continue
 
             logger.info(f"  Round {round_num}: {race_name}")
 

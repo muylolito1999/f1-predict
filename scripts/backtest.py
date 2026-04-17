@@ -89,10 +89,17 @@ def run_backtest(storage: Storage, config: dict,
         if not drivers:
             continue
 
-        # Build features
+        # Build features — pass actual grid since we know it for historical
+        # races; this is the quali→race "teacher forced" backtest.
+        grid_map = {
+            str(row["driver_id"]): int(row["grid_position"])
+            for _, row in actual.iterrows()
+            if pd.notna(row.get("grid_position"))
+        }
+
         try:
             features_df = feature_builder.build_race_features(
-                test_season, round_num, drivers
+                test_season, round_num, drivers, grid_map=grid_map
             )
         except Exception as e:
             logger.warning(f"Feature building failed for R{round_num}: {e}")
